@@ -1,5 +1,5 @@
 from array import array
-from operator import and_, or_
+from operator import and_, or_,__contains__
 from typing import List
 from fastapi import FastAPI, Request,Depends
 from fastapi.staticfiles import StaticFiles
@@ -31,6 +31,7 @@ class message(BaseModel):
     content:str
     sender:str
     room:int
+    type:bool
 class friendrequest_answer(BaseModel):
     username:str
     answer:bool
@@ -47,6 +48,7 @@ class name_fragment(BaseModel):
     username_fragment:str
 class room_send(BaseModel):
     room:int
+    isgroup:bool
 class friendCheck(BaseModel):
     current_user:str
     username:str
@@ -54,6 +56,8 @@ class group(BaseModel):
     groupName: str
     userCreator: str
     groupMembers: List[str]
+class get_groups(BaseModel):
+    username:str
 @app.exception_handler(AuthJWTException)
 def authjwt_exception_handler(request: Request, exc: AuthJWTException):
     return JSONResponse(
@@ -64,22 +68,41 @@ def authjwt_exception_handler(request: Request, exc: AuthJWTException):
 @app.post('/get_msg')
 async def get_msg(room:room_send):
     with Session(engine) as db:
-        msgs = db.execute('SELECT * FROM messages WHERE room = :roomId',{'roomId':room.room})
-        msg_array = []
-        for msg in msgs:
-            msg_array.append(msg)
-        return{"messages":msg_array}
+        if room.isgroup:
+            msgs = db.execute('SELECT * FROM messagesGroups WHERE room = :roomId',{'roomId':room.room})
+            msg_array = []
+            for msg in msgs:
+                msg_array.append(msg)
+            return{"messages":msg_array}
+        elif  room.isgroup is not True:
+            msgs = db.execute('SELECT * FROM messages WHERE room = :roomId',{'roomId':room.room})
+            msg_array = []
+            for msg in msgs:
+                msg_array.append(msg)
+            return{"messages":msg_array}
+    return{'code':'error'}
 @app.post('/send_msg')
 async def send_msg(message:message):
     time_sent = datetime.now()
-    append_msg = messagelist(content=message.content,timesent=time_sent,sender=message.sender,room=message.room)
+    if message.type:
+        append_msg = messagelist_groups(content=message.content,timesent=time_sent,sender=message.sender,room=message.room)
+    elif message.type is False:
+        append_msg = messagelist(content=message.content,timesent=time_sent,sender=message.sender,room=message.room)
     user = get_user(message.sender)
     with Session(engine) as db:
         db.execute('UPDATE userlist SET messages_sent = :msgs WHERE username = :val',{'val':message.sender,'msgs':user.messages_sent+1})
         db.add(append_msg)
         db.commit()
-        messages = db.query(messagelist).filter(messagelist.timesent == time_sent).first()
-    return{'id':messages.id, 'content': message.content,'timesent':messages.timesent,'sender': message.sender,'room': message.room}
+        if message.type:
+            messages = db.query(messagelist_groups).filter(messagelist_groups.timesent == time_sent).first()
+            db.execute('UPDATE groups SET lastMessage = :timevar WHERE id = :room',{'timevar':time_sent,'room':message.room})
+
+        elif message.type is False:
+            messages = db.query(messagelist).filter(messagelist.timesent == time_sent).first()
+            db.execute('UPDATE friendships SET lastMessage = :timevar WHERE id = :room',{'timevar':time_sent,'room':message.room})
+        db.commit()
+        if messages is not None:
+            return{'id':messages.id, 'content': message.content,'timesent':time_sent,'sender': messages.sender,'room': messages.room,'type':message.type}
 @app.post('/query_users')
 async def query_users(username_fragment:name_fragment):
     with Session(engine) as db:
@@ -182,16 +205,6 @@ async def set_offline(username):
     with Session(engine) as db:
             db.execute('UPDATE userlist SET last_seen = :timer, online = :onlinevar WHERE username = :val',{'val':username,'timer':datetime.now(),'onlinevar':False})
             db.commit()
-@app.post('/get_friendslist/{user}')
-async def get_friends(user): 
-    user = get_user(user)
-    if user is not False:
-        with Session(engine) as db:
-            friends = db.execute('SELECT * FROM friendships WHERE user1 = :user AND ended = :val OR user2 = :user AND ended = :val ',{'user':user.username,':val':False})
-            friendsarray = []
-            for friend in friends:
-                friendsarray.append(friend)
-            return{'friends':friendsarray}
 @app.post('/send_friend_req/{usr_from}')
 async def send_friend_req(data:friendrequest): 
     with Session(engine) as db:
@@ -244,7 +257,7 @@ async def get_friendlist(username):
                 friend = db.query(User).filter(User.username == user.user2).first()
             else:
                 friend = db.query(User).filter(User.username == user.user1).first()
-            friendship = {'id':user.id,'friend':friend.username,'since':user.friends_since,'last_seen':friend.last_seen,'isonline':friend.online}
+            friendship = {'id':user.id,'friend':friend.username,'since':user.friends_since,'last_seen':friend.last_seen,'isonline':friend.online,'lastMessage':user.lastMessage}
             users_array.append(friendship)
     return{'friends':users_array}
 @app.post('/create_group/{userCreator}')
@@ -260,6 +273,17 @@ async def create_group(data:group):
                 return{'code':'success'}
             else:
                 return{'code':'Group already exists..'}
+    return{'code':'error'}
+@app.post('/get_groups/{username}')
+async def get_groups_func(data:get_groups):
+    user = get_user(data.username)
+    if user is not None:
+        with Session(engine) as db:
+            groups = db.query(Groups).filter(Groups.participants.contains(data.username))
+            groups_array = []
+            for group in groups:
+                groups_array.append(group)
+            return{'groups':groups_array}
     return{'code':'error'}
 #Db start:
 if not Base.metadata.create_all(bind=engine):

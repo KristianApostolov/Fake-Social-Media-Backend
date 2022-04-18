@@ -1,4 +1,3 @@
-from enum import unique
 from pydantic import BaseModel
 from sqlalchemy import JSON, Boolean, ForeignKey, create_engine
 from sqlalchemy.orm import sessionmaker,relationship, Session
@@ -40,6 +39,13 @@ class messagelist(Base):
     timesent = Column(DateTime)
     sender = Column(Integer,nullable=False)
     room = Column(Integer, nullable=False)
+class messagelist_groups(Base):
+    __tablename__ = 'messagesGroups'
+    id = Column(Integer(),primary_key=True)
+    content = Column(String(512),nullable=False)
+    timesent = Column(DateTime)
+    sender = Column(Integer,nullable=False)
+    room = Column(Integer, nullable=False)
 
 class Friendship(Base):
     __tablename__ = 'friendships'
@@ -48,6 +54,7 @@ class Friendship(Base):
     user2 = Column(Integer, ForeignKey('userlist.id'))
     friends_since = Column(DateTime)
     ended = Column(Boolean)
+    lastMessage = Column(DateTime)
 
 class Friend_Request(Base):
     __tablename__ = 'friend_requests'
@@ -65,6 +72,7 @@ class Groups(Base):
     id = Column(Integer, primary_key=True)
     participants = Column(JSON)
     timecreated = Column(DateTime)
+    lastMessage = Column(DateTime)
     
 #Pydantic auth schemes:
 class Token(BaseModel):
