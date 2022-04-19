@@ -58,6 +58,9 @@ class group(BaseModel):
     groupMembers: List[str]
 class get_groups(BaseModel):
     username:str
+class unfriend(BaseModel):
+    username:str
+    friend:str
 @app.exception_handler(AuthJWTException)
 def authjwt_exception_handler(request: Request, exc: AuthJWTException):
     return JSONResponse(
@@ -252,14 +255,17 @@ async def get_friendlist(username):
         users_array = []
         users = db.execute('SELECT * FROM Friendships WHERE user1 = :USR OR user2 = :USR',{'USR':username})
         for user in users:
-            friend = ''
-            if user.user1 == username:
-                friend = db.query(User).filter(User.username == user.user2).first()
+            if not user.ended:
+                friend = ''
+                if user.user1 == username:
+                    friend = db.query(User).filter(User.username == user.user2).first()
+                else:
+                    friend = db.query(User).filter(User.username == user.user1).first()
+                friendship = {'id':user.id,'friend':friend.username,'since':user.friends_since,'last_seen':friend.last_seen,'isonline':friend.online,'lastMessage':user.lastMessage}
+                users_array.append(friendship)
             else:
-                friend = db.query(User).filter(User.username == user.user1).first()
-            friendship = {'id':user.id,'friend':friend.username,'since':user.friends_since,'last_seen':friend.last_seen,'isonline':friend.online,'lastMessage':user.lastMessage}
-            users_array.append(friendship)
-    return{'friends':users_array}
+                pass
+        return{'friends':users_array}
 @app.post('/create_group/{userCreator}')
 async def create_group(data:group):
     user = get_user(data.userCreator)
@@ -284,6 +290,15 @@ async def get_groups_func(data:get_groups):
             for group in groups:
                 groups_array.append(group)
             return{'groups':groups_array}
+    return{'code':'error'}
+@app.post('/unfriend/{username}')
+async def unfriend(data:unfriend):
+    user = get_user(data.username)
+    if user is not False:
+        with Session(engine) as db:
+            db.execute('UPDATE friendships SET ended = :ended WHERE user1 = :user1 AND user2 = :user2 OR user2 = :user1 AND user1 = :user2',{'user1':data.username,'user2':data.friend,'ended':True})
+            db.commit()
+        return{'code':'success'}
     return{'code':'error'}
 #Db start:
 if not Base.metadata.create_all(bind=engine):
