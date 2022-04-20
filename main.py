@@ -61,6 +61,14 @@ class get_groups(BaseModel):
 class unfriend(BaseModel):
     username:str
     friend:str
+class deleteGroup(BaseModel):
+    username:str
+    groupName:str
+class removeUserFromGroup(BaseModel):
+    username:str
+    groupName:str
+    id:int
+    userToRemove:str
 @app.exception_handler(AuthJWTException)
 def authjwt_exception_handler(request: Request, exc: AuthJWTException):
     return JSONResponse(
@@ -241,7 +249,7 @@ async def answer_frined_req(data:friendrequest_answer):
         db.execute('UPDATE friend_requests SET accepted = :answer, ended = :ended WHERE user1 =:usr1 AND user2 = :usr2 OR user1 =:usr2 AND user2 = :usr1',{'usr1':data.username,'usr2':data.user2,'answer':data.answer,'ended':True})
         if data.answer is True:
             werefriends = db.query(Friendship).filter(or_(and_(Friendship.user1 == data.username, Friendship.user2 == data.user2),(and_(Friendship.user2 == data.username, Friendship.user1 == data.user2)))).first()
-            if werefriends is None or werefriends is null:
+            if werefriends is None:
                 new_friends = Friendship(user1=data.username,user2=data.user2,friends_since=datetime.now(),ended=False)
                 db.add(new_friends)
             else:
@@ -297,6 +305,30 @@ async def unfriend(data:unfriend):
     if user is not False:
         with Session(engine) as db:
             db.execute('UPDATE friendships SET ended = :ended WHERE user1 = :user1 AND user2 = :user2 OR user2 = :user1 AND user1 = :user2',{'user1':data.username,'user2':data.friend,'ended':True})
+            db.commit()
+        return{'code':'success'}
+    return{'code':'error'}
+@app.post('/groups/remove_user/{username}')
+async def remove_user_from_group(data:removeUserFromGroup):
+    user = get_user(data.username)
+    if user is not False:
+        with Session(engine) as db:
+            group = db.query(Groups).filter(Groups.name == data.groupName and Groups.id == data.id).first()
+            participant = group.participants
+            participant.remove(data.userToRemove)
+            db.execute('UPDATE groups SET participants = :participants WHERE id = :id',{'id':data.id,'participants':participant})
+            db.commit()
+        return{'code':'success'}
+    return{'code':'error'}
+@app.post('/groups/delete/{username}')
+async def delete_group(data:deleteGroup):
+    user = get_user(data.username)
+    if user is not False:
+        with Session(engine) as db:
+            room  = db.query(Groups).filter(Groups.name == data.groupName).first()
+            print(room)
+            db.execute('DELETE * FROM groups WHERE name = :name',{'name':data.groupName})
+            db.execute('DELETE * FROM messagesGroups WHERE room = :room',{'room':room})
             db.commit()
         return{'code':'success'}
     return{'code':'error'}
