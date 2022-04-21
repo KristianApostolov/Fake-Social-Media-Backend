@@ -1,1 +1,5 @@
-database.db
+.database.db
+.Procfile
+.runtime.txt
+.requirements.txt
+/__pycache__

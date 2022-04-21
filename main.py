@@ -1,4 +1,6 @@
 from array import array
+from email.headerregistry import Group
+import json
 from operator import and_, or_,__contains__
 from typing import List
 from fastapi import FastAPI, Request,Depends
@@ -66,9 +68,20 @@ class deleteGroup(BaseModel):
     groupName:str
 class removeUserFromGroup(BaseModel):
     username:str
-    groupName:str
     id:int
-    userToRemove:str
+    remove: List[str]
+class addUsersToGroup(BaseModel):
+    username:str
+    room:int
+    usersToAdd:List[str]
+class leaveGroup(BaseModel):
+    username:str
+    room:int
+    isAdmin:bool
+class deleteGroup(BaseModel):
+    username:str
+    room:int
+    isCreator:bool
 @app.exception_handler(AuthJWTException)
 def authjwt_exception_handler(request: Request, exc: AuthJWTException):
     return JSONResponse(
@@ -85,7 +98,7 @@ async def get_msg(room:room_send):
             for msg in msgs:
                 msg_array.append(msg)
             return{"messages":msg_array}
-        elif  room.isgroup is not True:
+        elif not room.isgroup:
             msgs = db.execute('SELECT * FROM messages WHERE room = :roomId',{'roomId':room.room})
             msg_array = []
             for msg in msgs:
@@ -96,9 +109,9 @@ async def get_msg(room:room_send):
 async def send_msg(message:message):
     time_sent = datetime.now()
     if message.type:
-        append_msg = messagelist_groups(content=message.content,timesent=time_sent,sender=message.sender,room=message.room)
+        append_msg = messagelist_groups(content=message.content,timesent=time_sent,sender=message.sender,room=message.room,isCommand=False)
     elif message.type is False:
-        append_msg = messagelist(content=message.content,timesent=time_sent,sender=message.sender,room=message.room)
+        append_msg = messagelist(content=message.content,timesent=time_sent,sender=message.sender,room=message.room,isCommand=False)
     user = get_user(message.sender)
     with Session(engine) as db:
         db.execute('UPDATE userlist SET messages_sent = :msgs WHERE username = :val',{'val':message.sender,'msgs':user.messages_sent+1})
@@ -107,13 +120,12 @@ async def send_msg(message:message):
         if message.type:
             messages = db.query(messagelist_groups).filter(messagelist_groups.timesent == time_sent).first()
             db.execute('UPDATE groups SET lastMessage = :timevar WHERE id = :room',{'timevar':time_sent,'room':message.room})
-
         elif message.type is False:
             messages = db.query(messagelist).filter(messagelist.timesent == time_sent).first()
             db.execute('UPDATE friendships SET lastMessage = :timevar WHERE id = :room',{'timevar':time_sent,'room':message.room})
         db.commit()
         if messages is not None:
-            return{'id':messages.id, 'content': message.content,'timesent':time_sent,'sender': messages.sender,'room': messages.room,'type':message.type}
+            return{'id':messages.id, 'content': message.content,'timesent':time_sent,'sender': messages.sender,'room': messages.room,isCommand:False,'type':message.type}
 @app.post('/query_users')
 async def query_users(username_fragment:name_fragment):
     with Session(engine) as db:
@@ -280,8 +292,8 @@ async def create_group(data:group):
     if user is not False:
         with Session(engine) as db:
             alreadyExists = db.query(Groups).filter(Groups.name == data.groupName).first()
-            if alreadyExists is None or alreadyExists is null:
-                new_group = Groups(name=data.groupName,creator=data.userCreator,participants=data.groupMembers,timecreated=datetime.now())
+            if alreadyExists is None:
+                new_group = Groups(name=data.groupName,admin=data.userCreator,creator=data.userCreator,participants=data.groupMembers,timecreated=datetime.now())
                 db.add(new_group)
                 db.commit()
                 return{'code':'success'}
@@ -308,29 +320,82 @@ async def unfriend(data:unfriend):
             db.commit()
         return{'code':'success'}
     return{'code':'error'}
-@app.post('/groups/remove_user/{username}')
-async def remove_user_from_group(data:removeUserFromGroup):
-    user = get_user(data.username)
-    if user is not False:
-        with Session(engine) as db:
-            group = db.query(Groups).filter(Groups.name == data.groupName and Groups.id == data.id).first()
-            participant = group.participants
-            participant.remove(data.userToRemove)
-            db.execute('UPDATE groups SET participants = :participants WHERE id = :id',{'id':data.id,'participants':participant})
-            db.commit()
-        return{'code':'success'}
-    return{'code':'error'}
 @app.post('/groups/delete/{username}')
 async def delete_group(data:deleteGroup):
     user = get_user(data.username)
     if user is not False:
         with Session(engine) as db:
-            room  = db.query(Groups).filter(Groups.name == data.groupName).first()
-            print(room)
-            db.execute('DELETE * FROM groups WHERE name = :name',{'name':data.groupName})
-            db.execute('DELETE * FROM messagesGroups WHERE room = :room',{'room':room})
+            db.execute('DELETE FROM groups WHERE id = :id',{'id':data.room})
+            db.execute('DELETE FROM messagesGroups WHERE room = :room',{'room':data.room})
             db.commit()
         return{'code':'success'}
+    return{'code':'error'}
+@app.post('/kickUsers/{username}')
+async def kickUsers(data:removeUserFromGroup):
+    user = get_user(data.username)
+    if user is not False:
+        with Session(engine) as db:
+            time_sent = datetime.now()
+            group = db.query(Groups).filter(Groups.id == data.id).first()
+            participants = group.participants
+            for user in data.remove:
+                participants.remove(user)
+                appendCommandMsg = messagelist_groups(content=f'{data.username} removed {user} from the chat',timesent=time_sent,sender=data.username,room=data.id,isCommand=True)
+                db.add(appendCommandMsg)
+                db.commit()
+            if group.participants is not None:
+                db.execute('UPDATE groups SET participants = :participants WHERE id = :name',{'participants':json.dumps(participants),'name':data.id})
+                db.commit()
+                return{'id':appendCommandMsg.id, 'content': appendCommandMsg.content,'timesent':time_sent,'sender': appendCommandMsg.sender,'room': appendCommandMsg.room,'type':True}
+    return{'code':'error'}
+@app.post('/addUserToGroup/{username}')
+async def add_user_to_group(data:addUsersToGroup):
+    if data.usersToAdd is not None:
+        user = get_user(data.username)
+        if user is not False:
+            with Session(engine) as db:
+                group = db.query(Groups).filter(Groups.id == data.room).first()
+                participants = group.participants 
+                time_sent = datetime.now()
+                for user in data.usersToAdd:
+                    if user not in group.participants:
+                        participants.append(user)
+                string = ', '.join(data.usersToAdd)
+                appendCommandMsg = messagelist_groups(content=f'{data.username} added {string} to the chat',timesent=time_sent,sender=data.username,room=data.room,isCommand=True)
+                db.add(appendCommandMsg)
+                db.execute('UPDATE groups SET participants = :participants WHERE id = :id',{'id':data.room,'participants':json.dumps(participants)})
+                db.commit()
+                return{'id':appendCommandMsg.id, 'content': appendCommandMsg.content,'timesent':time_sent,'sender': appendCommandMsg.sender,'room': appendCommandMsg.room,'type':True,'isCommand':True}
+    return{'code':'error'}
+@app.post('/leaveGroup/{username}')
+async def leave_group(data:leaveGroup):
+    time_sent = datetime.now()
+    user = get_user(data.username)
+    if user is not False:
+        with Session(engine) as db:
+            group = db.query(Groups).filter(Groups.id == data.room).first()
+            participants = group.participants
+            if len(participants) == 1:
+                db.execute('DELETE FROM groups WHERE id = :id',{'id':data.room})
+                db.execute('DELETE FROM messagesGroups WHERE room = :room',{'room':data.room})
+                db.commit()
+                return{'code':'success'}
+            newOwner = str(participants[0])
+            if data.isAdmin:
+                participants.remove(data.username)  
+                db.execute('UPDATE groups SET admin = :admin WHERE id = :id',{'id':data.room,'admin':newOwner,'participants':json.dumps(participants)})
+                db.execute('UPDATE groups SET participants = :participants WHERE id = :id',{'id':data.room,'participants':json.dumps(participants)})
+                appendCommandMsg = messagelist_groups(content=f'{data.username} left the chat, the new admin is {participants[0]}, from',timesent=time_sent,sender=data.username,room=data.room,isCommand=True)
+                db.add(appendCommandMsg)
+                db.commit()
+                return{'id':appendCommandMsg.id, 'content': appendCommandMsg.content,'timesent':time_sent,'sender': appendCommandMsg.sender,'room': appendCommandMsg.room,'type':True,'isCommand':True}
+            else:
+                participants.remove(data.username)
+                db.execute('UPDATE groups SET participants = :participants WHERE id = :id',{'id':data.room,'participants':json.dumps(participants)})
+                appendCommandMsg = messagelist_groups(content=f'{data.username} left the chat',timesent=time_sent,sender=data.username,room=data.room,isCommand=True)
+                db.add(appendCommandMsg)
+                db.commit() 
+                return{'id':appendCommandMsg.id, 'content': appendCommandMsg.content,'timesent':time_sent,'sender': appendCommandMsg.sender,'room': appendCommandMsg.room,'type':True,'isCommand':True}
     return{'code':'error'}
 #Db start:
 if not Base.metadata.create_all(bind=engine):

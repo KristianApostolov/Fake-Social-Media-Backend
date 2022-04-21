@@ -39,6 +39,7 @@ class messagelist(Base):
     timesent = Column(DateTime)
     sender = Column(Integer,nullable=False)
     room = Column(Integer, nullable=False)
+    
 class messagelist_groups(Base):
     __tablename__ = 'messagesGroups'
     id = Column(Integer(),primary_key=True)
@@ -46,6 +47,7 @@ class messagelist_groups(Base):
     timesent = Column(DateTime)
     sender = Column(Integer,nullable=False)
     room = Column(Integer, nullable=False)
+    isCommand = Column(Boolean)
 
 class Friendship(Base):
     __tablename__ = 'friendships'
@@ -69,6 +71,7 @@ class Groups(Base):
     __tablename__ = 'groups'
     name = Column(String(30),unique=True)
     creator = Column(Integer, ForeignKey('userlist.id'))
+    admin = Column(String)
     id = Column(Integer, primary_key=True)
     participants = Column(JSON)
     timecreated = Column(DateTime)
