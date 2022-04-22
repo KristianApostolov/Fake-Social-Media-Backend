@@ -26,6 +26,7 @@ class User(Base):
     last_seen = Column(DateTime,index=True)
     online = Column(Boolean)
 
+
 class AccountSettings(Base):
     __tablename__ = 'account_personalisations'
     account = Column(Integer, ForeignKey('userlist.id'), primary_key=True)
@@ -69,7 +70,7 @@ class Friend_Request(Base):
 
 class Groups(Base):
     __tablename__ = 'groups'
-    name = Column(String(30),unique=True)
+    name = Column(String(30))
     creator = Column(Integer, ForeignKey('userlist.id'))
     admin = Column(String)
     id = Column(Integer, primary_key=True)

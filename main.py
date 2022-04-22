@@ -111,7 +111,7 @@ async def send_msg(message:message):
     if message.type:
         append_msg = messagelist_groups(content=message.content,timesent=time_sent,sender=message.sender,room=message.room,isCommand=False)
     elif message.type is False:
-        append_msg = messagelist(content=message.content,timesent=time_sent,sender=message.sender,room=message.room,isCommand=False)
+        append_msg = messagelist(content=message.content,timesent=time_sent,sender=message.sender,room=message.room)
     user = get_user(message.sender)
     with Session(engine) as db:
         db.execute('UPDATE userlist SET messages_sent = :msgs WHERE username = :val',{'val':message.sender,'msgs':user.messages_sent+1})
@@ -125,7 +125,7 @@ async def send_msg(message:message):
             db.execute('UPDATE friendships SET lastMessage = :timevar WHERE id = :room',{'timevar':time_sent,'room':message.room})
         db.commit()
         if messages is not None:
-            return{'id':messages.id, 'content': message.content,'timesent':time_sent,'sender': messages.sender,'room': messages.room,isCommand:False,'type':message.type}
+            return{'id':messages.id, 'content': message.content,'timesent':time_sent,'sender': messages.sender,'room': messages.room,'isCommand':False,'type':message.type}
 @app.post('/query_users')
 async def query_users(username_fragment:name_fragment):
     with Session(engine) as db:
@@ -148,7 +148,7 @@ async def login_user(userdata:user,Authorize:AuthJWT = Depends()):
             user.last_seen = datetime.now()
             access_token = Authorize.create_refresh_token(subject=user.username)
             return{'code':'success','token':access_token}
-    return{'code':'error'}
+    return{'code':'Wrong credentials'}
 @app.post('/refresh_token_renew')
 async def token_renew(token:Refresh_Token,Authorize: AuthJWT = Depends()):
     if token.user != '':
@@ -206,6 +206,7 @@ async def check_online_status(data:friendCheck):
         arefriends = db.execute('SELECT * FROM friendships WHERE user1 = :usr1 AND user2 = :usr2 OR user2 = :usr1 AND user1 = :usr2',{'usr1':data.username,'usr2':data.current_user})
         friends = False
         requestPresent = False
+        room = 0
         isFromMe = False
         present = db.query(Friend_Request).filter(or_(and_(Friend_Request.user1 == data.username, Friend_Request.user2 == data.current_user),and_(Friend_Request.user2 == data.username, Friend_Request.user1 == data.current_user))).first()
         if present is not None:
@@ -214,9 +215,10 @@ async def check_online_status(data:friendCheck):
                 isFromMe = True
         for friend in arefriends:
             if friend.user1 == data.current_user and friend.ended == False or  friend.user2 == data.current_user and friend.ended == False:
+                room = friend.id
                 friends = True
     if user is not False:
-        return{'isOnline':user.online,'lastSeen':user.last_seen,'areFriends':friends,'isPresent':requestPresent,'isFromMe':isFromMe}
+        return{'isOnline':user.online,'lastSeen':user.last_seen,'areFriends':friends,'isPresent':requestPresent,'isFromMe':isFromMe,'room':room}
     return{'code':'error'}
 @app.post('/last_seen/{username}')
 async def last_seen(username):
@@ -291,14 +293,10 @@ async def create_group(data:group):
     user = get_user(data.userCreator)
     if user is not False:
         with Session(engine) as db:
-            alreadyExists = db.query(Groups).filter(Groups.name == data.groupName).first()
-            if alreadyExists is None:
-                new_group = Groups(name=data.groupName,admin=data.userCreator,creator=data.userCreator,participants=data.groupMembers,timecreated=datetime.now())
-                db.add(new_group)
-                db.commit()
-                return{'code':'success'}
-            else:
-                return{'code':'Group already exists..'}
+            new_group = Groups(name=data.groupName,admin=data.userCreator,creator=data.userCreator,participants=data.groupMembers,timecreated=datetime.now())
+            db.add(new_group)
+            db.commit()
+            return{'code':'success'}
     return{'code':'error'}
 @app.post('/get_groups/{username}')
 async def get_groups_func(data:get_groups):
@@ -339,10 +337,11 @@ async def kickUsers(data:removeUserFromGroup):
             group = db.query(Groups).filter(Groups.id == data.id).first()
             participants = group.participants
             for user in data.remove:
-                participants.remove(user)
-                appendCommandMsg = messagelist_groups(content=f'{data.username} removed {user} from the chat',timesent=time_sent,sender=data.username,room=data.id,isCommand=True)
-                db.add(appendCommandMsg)
-                db.commit()
+                if user in participants:
+                    participants.remove(user)
+                    appendCommandMsg = messagelist_groups(content=f'{data.username} removed {user} from the chat',timesent=time_sent,sender=data.username,room=data.id,isCommand=True)
+                    db.add(appendCommandMsg)
+                    db.commit()
             if group.participants is not None:
                 db.execute('UPDATE groups SET participants = :participants WHERE id = :name',{'participants':json.dumps(participants),'name':data.id})
                 db.commit()
